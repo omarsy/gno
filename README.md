@@ -132,3 +132,4 @@ repository.
     (pkg.go.dev will not show our repository as it has a license it doesn't recognise)
 </details>
 
+# inocash
