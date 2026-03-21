@@ -151,10 +151,21 @@ func PredefineFileSet(store Store, pn *PackageNode, fset *FileSet) {
 					if iota_ != nil {
 						part.SetAttribute(ATTR_IOTA, iota_)
 					}
-					predefineRecursively(store, fn, part)
 					split[j] = part
 				}
+				// Replace in fn.Decls BEFORE predefining so that
+				// GetDeclFor finds individual split declarations
+				// instead of the original multi-value declaration,
+				// which would cause false circular dependency errors.
 				fn.Decls = append(fn.Decls[:i], append(split, fn.Decls[i+1:]...)...) //nolint:makezero
+				for _, part := range split {
+					if part.GetAttribute(ATTR_PREDEFINED) == true {
+						// May have been predefined as a dependency
+						// of a prior part in the split.
+						continue
+					}
+					predefineRecursively(store, fn, part)
+				}
 				i += len(vd.NameExprs) - 1
 				continue
 			} else {
