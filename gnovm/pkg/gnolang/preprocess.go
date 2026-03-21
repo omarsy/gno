@@ -313,7 +313,7 @@ func initStaticBlocks1(store Store, ctx BlockNode, nn Node) {
 						replaceAllLoopvar(last, n, ln)
 					}
 				case *SendStmt:
-					panic("not yet implemented")
+					panic("channel operations are not supported")
 				}
 			case *RangeStmt:
 				if n.Op != DEFINE {
@@ -2396,7 +2396,7 @@ func preprocess1(store Store, ctx BlockNode, n Node) Node {
 
 			// TRANS_LEAVE -----------------------
 			case *ChanTypeExpr:
-				evalStaticType(store, last, n)
+				panic("channel type is not supported")
 
 			// TRANS_LEAVE -----------------------
 			case *FuncTypeExpr:
@@ -5019,7 +5019,7 @@ func tryPredefine(store Store, pkg *PackageNode, last BlockNode, d Decl, stack [
 			case *InterfaceTypeExpr:
 				t = &InterfaceType{}
 			case *ChanTypeExpr:
-				t = &ChanType{}
+				panic("channel type is not supported")
 			case *MapTypeExpr:
 				t = &MapType{}
 			case *StructTypeExpr:
