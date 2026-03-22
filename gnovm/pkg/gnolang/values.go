@@ -331,7 +331,12 @@ func (av *ArrayValue) Copy(alloc *Allocator) *ArrayValue {
 	*/
 	if av.Data == nil {
 		av2 := alloc.NewListArray(len(av.List))
-		copy(av2.List, av.List)
+		// Each element is copied individually to ensure that nested
+		// value types (arrays, structs) are deep-copied and not
+		// aliased by sharing the same pointer.
+		for i, elem := range av.List {
+			av2.List[i] = elem.Copy(alloc)
+		}
 		return av2
 	}
 	av2 := alloc.NewDataArray(len(av.Data))
