@@ -2,6 +2,7 @@ package validators
 
 import (
 	"chain/runtime"
+	"math"
 	"testing"
 
 	"gno.land/p/nt/avl/v0"
@@ -145,4 +146,16 @@ func TestGetChanges_BoundedRange(t *testing.T) {
 
 	// Query beyond stored range returns empty
 	uassert.Equal(t, 0, len(GetChanges(h2+1, h2+1)))
+}
+
+func TestGetChanges_PanicsOnInvalidRange(t *testing.T) {
+	uassert.PanicsWithMessage(t, "invalid range: from must be <= to", func() {
+		GetChanges(10, 5)
+	})
+}
+
+func TestGetChanges_PanicsOnOverflow(t *testing.T) {
+	uassert.PanicsWithMessage(t, "to exceeds maximum allowed value", func() {
+		GetChanges(0, math.MaxInt64)
+	})
 }
