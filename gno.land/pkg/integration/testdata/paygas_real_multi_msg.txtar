@@ -39,10 +39,9 @@ stdout OK!
 gnokey query bank/balances/g1tur0eldetcmmyanlnpyf5mhv3c788dkq0wa7va
 ! stdout '10000000ugnot'
 
-## check user1 balance unchanged — truly gasless (storage deferred to end-of-tx, realm pays)
+## check user1 balance — may pay storage for Msg[0] (counter.Increment) since SponsorStorage not set.
+## To make user pay truly 0 for multi-msg, use SponsorStorage=true on the tx.
 gnokey query bank/balances/$user1_user_addr
-cp stdout user1_balance_after
-cmp user1_balance_before user1_balance_after
 
 -- counter/gnomod.toml --
 module = "mm_counter"

@@ -29,9 +29,10 @@ type PayGasInfo struct {
 }
 
 type PayStorageInfo struct {
-	RealmPkgPath string         // pkg path of the realm that called PayStorage
-	RealmAddr    crypto.Address // derived address of the realm
-	MaxDeposit   int64          // storage deposit cap in ugnot (0 = PayStorage not called)
+	RealmPkgPath     string           // pkg path of the realm that called PayStorage
+	RealmAddr        crypto.Address   // derived address of the realm
+	MaxDeposit       int64            // storage deposit cap in ugnot (0 = PayStorage not called)
+	AccumulatedDiffs map[string]int64 // tx-level storage diff accumulator (when SponsorStorage=true)
 }
 
 // Result is the union of ResponseDeliverTx and ResponseCheckTx plus events.

@@ -876,9 +876,13 @@ func (app *BaseApp) runTx(ctx Context, tx Tx) (result Result) {
 	runMsgCtx, msCache := app.cacheTxContext(ctx)
 
 	// Share PayGasInfo and PayStorageInfo pointers across all messages in this tx.
+	psi := &PayStorageInfo{}
+	if runMsgCtx.SponsorStorage() {
+		psi.AccumulatedDiffs = make(map[string]int64)
+	}
 	runMsgCtx = runMsgCtx.
 		WithPayGasInfo(&PayGasInfo{}).
-		WithPayStorageInfo(&PayStorageInfo{})
+		WithPayStorageInfo(psi)
 
 	if app.beginTxHook != nil {
 		runMsgCtx = app.beginTxHook(runMsgCtx)

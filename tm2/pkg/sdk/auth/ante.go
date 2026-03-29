@@ -134,8 +134,8 @@ func NewAnteHandler(ak AccountKeeper, bank BankKeeperI, sigGasConsumer Signature
 		isGenesis := ctx.BlockHeight() == 0
 
 		// fetch first signer, who's going to pay the fees
-		// Store tx caller for end-of-tx settlement (storage deposits).
-		newCtx = newCtx.WithTxCaller(signerAddrs[0])
+		// Store tx caller and sponsor flag for end-of-tx settlement.
+		newCtx = newCtx.WithTxCaller(signerAddrs[0]).WithSponsorStorage(tx.Fee.SponsorStorage)
 		signerAccs[0], res = GetSignerAcc(newCtx, ak, signerAddrs[0])
 		if !res.IsOK() {
 			return newCtx, res, true

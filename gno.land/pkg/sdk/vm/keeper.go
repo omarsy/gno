@@ -50,6 +50,20 @@ const (
 	maxGasQuery   = 3_000_000_000 // same as max block gas
 )
 
+// accumulateStorageDiffs reads per-message storage diffs and adds them to the
+// tx-level accumulator on PayStorageInfo. Must be called BEFORE the next
+// getGnoTransactionStore call (which clears diffs via ClearObjectCache).
+func accumulateStorageDiffs(ctx sdk.Context, gnostore gno.TransactionStore) {
+	diffs := gnostore.RealmStorageDiffs()
+	psi := ctx.PayStorageInfo()
+	if psi == nil || psi.AccumulatedDiffs == nil {
+		return
+	}
+	for path, diff := range diffs {
+		psi.AccumulatedDiffs[path] += diff
+	}
+}
+
 // getGasPrice reads the current gas price from the auth module's context value.
 func getGasPrice(ctx sdk.Context) std.GasPrice {
 	if v := ctx.Context().Value(auth.GasPriceContextKey{}); v != nil {
@@ -664,7 +678,17 @@ func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
 	defer doRecover(m2, &err)
 	m2.RunMemPackage(memPkg, true)
 
-	// Storage deposit settlement is deferred to endTxHook.
+	// Storage deposit: per-message or deferred depending on SponsorStorage.
+	if ctx.SponsorStorage() {
+		accumulateStorageDiffs(ctx, gnostore)
+	} else {
+		params := vm.GetParams(ctx)
+		maxDeposit := msg.MaxDeposit
+		err = vm.ProcessStorageDeposit(ctx, creator, maxDeposit, gnostore, params)
+		if err != nil {
+			return err
+		}
+	}
 	// Log the telemetry
 	logTelemetry(
 		m2.GasMeter.GasConsumed(),
@@ -795,7 +819,18 @@ func (vm *VMKeeper) Call(ctx sdk.Context, msg MsgCall) (res string, err error) {
 		}
 	}
 
-	// Storage deposit settlement is deferred to endTxHook.
+	// Storage deposit: per-message or deferred depending on SponsorStorage.
+	if ctx.SponsorStorage() {
+		// Accumulate diffs before ClearObjectCache clears them.
+		accumulateStorageDiffs(ctx, gnostore)
+	} else {
+		// Original per-message settlement.
+		params := vm.GetParams(ctx)
+		err = vm.ProcessStorageDeposit(ctx, caller, msg.MaxDeposit, gnostore, params)
+		if err != nil {
+			return "", err
+		}
+	}
 	// Log the telemetry
 	logTelemetry(
 		m.GasMeter.GasConsumed(),
@@ -968,7 +1003,16 @@ func (vm *VMKeeper) Run(ctx sdk.Context, msg MsgRun) (res string, err error) {
 	defer doRecover(m2, &err)
 	m2.RunMain()
 	res = buf.String()
-	// Storage deposit settlement is deferred to endTxHook.
+	// Storage deposit: per-message or deferred depending on SponsorStorage.
+	if ctx.SponsorStorage() {
+		accumulateStorageDiffs(ctx, gnostore)
+	} else {
+		params := vm.GetParams(ctx)
+		err = vm.ProcessStorageDeposit(ctx, caller, msg.MaxDeposit, gnostore, params)
+		if err != nil {
+			return "", err
+		}
+	}
 	// Log the telemetry
 	logTelemetry(
 		m2.GasMeter.GasConsumed(),
@@ -1352,6 +1396,82 @@ func (vm *VMKeeper) ProcessStorageDeposit(ctx sdk.Context, caller crypto.Address
 				PkgPath:        rlmPath,
 				RefundWithheld: isRestricted,
 			}
+			ctx.EventLogger().EmitEvent(evt)
+		}
+		gnostore.SetPackageRealm(rlm)
+	}
+	if allErrs != nil {
+		return fmt.Errorf("storage deposit processing encountered one or more errors: %w", allErrs)
+	}
+	return nil
+}
+
+// ProcessStorageDepositFromDiffs processes storage deposits using pre-accumulated diffs
+// (for SponsorStorage=true txs where diffs are accumulated across all messages).
+func (vm *VMKeeper) ProcessStorageDepositFromDiffs(ctx sdk.Context, caller crypto.Address, diffs map[string]int64, maxBudget int64, gnostore gno.Store, params Params) error {
+	price := std.MustParseCoin(params.StoragePrice)
+	depositAmt := std.MustParseCoin(params.DefaultDeposit).Amount
+
+	sortedRealm := make([]string, 0, len(diffs))
+	for path := range diffs {
+		sortedRealm = append(sortedRealm, path)
+	}
+	slices.SortFunc(sortedRealm, strings.Compare)
+
+	var allErrs error
+	totalCharged := int64(0)
+	for _, rlmPath := range sortedRealm {
+		diff := diffs[rlmPath]
+		if diff == 0 {
+			continue
+		}
+		rlm := gnostore.GetPackageRealm(rlmPath)
+		if diff > 0 {
+			requiredDeposit := overflow.Mulp(diff, price.Amount)
+			// Check budget (from PayStorage maxDeposit)
+			if maxBudget > 0 && totalCharged+requiredDeposit > maxBudget {
+				allErrs = goerrors.Join(allErrs, fmt.Errorf(
+					"storage deposit exceeds PayStorage budget: total %d%s > budget %d%s",
+					totalCharged+requiredDeposit, ugnot.Denom, maxBudget, ugnot.Denom))
+				continue
+			}
+			if depositAmt < requiredDeposit {
+				allErrs = goerrors.Join(allErrs, fmt.Errorf(
+					"not enough deposit to cover the storage usage: requires %d%s for %d bytes",
+					requiredDeposit, ugnot.Denom, diff))
+				continue
+			}
+			err := vm.lockStorageDeposit(ctx, caller, rlm, requiredDeposit, diff)
+			if err != nil {
+				allErrs = goerrors.Join(allErrs, fmt.Errorf(
+					"lockStorageDeposit failed for realm %s: %w", rlmPath, err))
+				continue
+			}
+			totalCharged += requiredDeposit
+			depositAmt -= requiredDeposit
+			d := std.Coin{Denom: ugnot.Denom, Amount: requiredDeposit}
+			evt := chain.StorageDepositEvent{BytesDelta: diff, FeeDelta: d, PkgPath: rlmPath}
+			ctx.EventLogger().EmitEvent(evt)
+		} else {
+			released := -diff
+			if rlm.Storage < uint64(released) {
+				panic(fmt.Sprintf("not enough storage to be released for realm %s", rlmPath))
+			}
+			depositUnlocked := overflow.Mulp(released, price.Amount)
+			if rlm.Deposit < uint64(depositUnlocked) {
+				panic(fmt.Sprintf("not enough deposit to be unlocked for realm %s", rlmPath))
+			}
+			isRestricted := slices.Contains(vm.bank.RestrictedDenoms(ctx), ugnot.Denom)
+			receiver := caller
+			if isRestricted {
+				receiver = params.StorageFeeCollector
+			}
+			err := vm.refundStorageDeposit(ctx, receiver, rlm, depositUnlocked, released)
+			if err != nil {
+				return err
+			}
+			d := std.Coin{Denom: ugnot.Denom, Amount: depositUnlocked}
+			evt := chain.StorageUnlockEvent{BytesDelta: diff, FeeRefund: d, PkgPath: rlmPath, RefundWithheld: isRestricted}
 			ctx.EventLogger().EmitEvent(evt)
 		}
 		gnostore.SetPackageRealm(rlm)

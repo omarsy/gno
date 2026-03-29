@@ -208,20 +208,26 @@ func NewAppWithOptions(cfg *AppOptions) (abci.Application, error) {
 				}
 			}
 
-			// Storage deposit settlement (deferred from message handlers).
-			// Use ReadOnly to preserve RealmStorageDiffs (GetGnoTransactionStore clears them).
-			gnostore := vmk.GetGnoTransactionStoreReadOnly(ctx)
-			params := vmk.GetParams(ctx)
-			storagePayer := ctx.TxCaller()
-			if psi := ctx.PayStorageInfo(); psi != nil && psi.MaxDeposit > 0 {
-				storagePayer = psi.RealmAddr
-			}
-			if !storagePayer.IsZero() {
-				err := vmk.ProcessStorageDeposit(ctx, storagePayer, std.Coins{}, gnostore, params)
-				if err != nil {
-					panic(fmt.Sprintf("storage deposit settlement failed: %v", err))
+			// Storage deposit settlement.
+			if ctx.SponsorStorage() {
+				// SponsorStorage: settle accumulated diffs from all messages.
+				// Diffs were already accumulated per-message in accumulateStorageDiffs.
+				// No need to read final diffs again — handlers already captured them.
+				psi := ctx.PayStorageInfo()
+				storagePayer := ctx.TxCaller()
+				if psi != nil && psi.MaxDeposit > 0 {
+					storagePayer = psi.RealmAddr
+				}
+				if !storagePayer.IsZero() && psi != nil && len(psi.AccumulatedDiffs) > 0 {
+					gnostore := vmk.GetGnoTransactionStoreReadOnly(ctx)
+					params := vmk.GetParams(ctx)
+					err := vmk.ProcessStorageDepositFromDiffs(ctx, storagePayer, psi.AccumulatedDiffs, psi.MaxDeposit, gnostore, params)
+					if err != nil {
+						panic(fmt.Sprintf("storage deposit settlement failed: %v", err))
+					}
 				}
 			}
+			// Per-message storage (SponsorStorage=false) was already settled in handlers.
 
 			vmk.CommitGnoTransactionStore(ctx)
 		}
