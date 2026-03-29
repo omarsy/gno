@@ -543,6 +543,8 @@ func (vm *VMKeeper) checkCLASignature(ctx sdk.Context, creator crypto.Address) e
 
 // AddPackage adds a package with given fileset.
 func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
+	// Fetch params before execution — execution may change params.
+	params := vm.GetParams(ctx)
 	creator := msg.Creator
 	pkgPath := msg.Package.Path
 	memPkg := msg.Package
@@ -682,9 +684,7 @@ func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
 	if ctx.SponsorStorage() {
 		accumulateStorageDiffs(ctx, gnostore)
 	} else {
-		params := vm.GetParams(ctx)
-		maxDeposit := msg.MaxDeposit
-		err = vm.ProcessStorageDeposit(ctx, creator, maxDeposit, gnostore, params)
+		err = vm.ProcessStorageDeposit(ctx, creator, msg.MaxDeposit, gnostore, params)
 		if err != nil {
 			return err
 		}
@@ -704,6 +704,8 @@ func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
 
 // Call calls a public Gno function (for delivertx).
 func (vm *VMKeeper) Call(ctx sdk.Context, msg MsgCall) (res string, err error) {
+	// Fetch params before execution — execution may change params (e.g. governance proposals).
+	params := vm.GetParams(ctx)
 	pkgPath := msg.PkgPath // to import
 	fnc := msg.Func
 	gnostore := vm.getGnoTransactionStore(ctx)
@@ -821,11 +823,8 @@ func (vm *VMKeeper) Call(ctx sdk.Context, msg MsgCall) (res string, err error) {
 
 	// Storage deposit: per-message or deferred depending on SponsorStorage.
 	if ctx.SponsorStorage() {
-		// Accumulate diffs before ClearObjectCache clears them.
 		accumulateStorageDiffs(ctx, gnostore)
 	} else {
-		// Original per-message settlement.
-		params := vm.GetParams(ctx)
 		err = vm.ProcessStorageDeposit(ctx, caller, msg.MaxDeposit, gnostore, params)
 		if err != nil {
 			return "", err
@@ -894,6 +893,8 @@ func doRecoverInternal(m *gno.Machine, e *error, r any, repanicOutOfGas bool) {
 
 // Run executes arbitrary Gno code in the context of the caller's realm.
 func (vm *VMKeeper) Run(ctx sdk.Context, msg MsgRun) (res string, err error) {
+	// Fetch params before execution — execution may change params.
+	params := vm.GetParams(ctx)
 	caller := msg.Caller
 	pkgAddr := caller
 	gnostore := vm.getGnoTransactionStore(ctx)
@@ -1007,7 +1008,6 @@ func (vm *VMKeeper) Run(ctx sdk.Context, msg MsgRun) (res string, err error) {
 	if ctx.SponsorStorage() {
 		accumulateStorageDiffs(ctx, gnostore)
 	} else {
-		params := vm.GetParams(ctx)
 		err = vm.ProcessStorageDeposit(ctx, caller, msg.MaxDeposit, gnostore, params)
 		if err != nil {
 			return "", err
