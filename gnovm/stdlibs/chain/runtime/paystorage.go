@@ -3,7 +3,6 @@ package runtime
 import (
 	gno "github.com/gnolang/gno/gnovm/pkg/gnolang"
 	"github.com/gnolang/gno/gnovm/stdlibs/internal/execctx"
-	"github.com/gnolang/gno/tm2/pkg/crypto"
 	"github.com/gnolang/gno/tm2/pkg/overflow"
 )
 
@@ -58,7 +57,7 @@ func PayStorage(m *gno.Machine, maxDeposit int64) {
 	}
 
 	// 8. Check realm balance covers maxDeposit + PayGas maxFee (if both active)
-	realmAddr := crypto.Bech32Address(gno.DerivePkgBech32Addr(currentPkgPath))
+	realmAddr := gno.DerivePkgBech32Addr(currentPkgPath)
 	coins := ctx.Banker.GetCoins(realmAddr)
 	ugnotBalance := int64(0)
 	for _, c := range coins {
