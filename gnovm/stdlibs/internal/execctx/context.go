@@ -26,17 +26,20 @@ type ParamsInterface interface {
 }
 
 type ExecContext struct {
-	ChainID         string
-	ChainDomain     string
-	Height          int64
-	Timestamp       int64 // seconds
-	TimestampNano   int64 // nanoseconds, only used for testing.
-	OriginCaller    crypto.Bech32Address
-	OriginSend      std.Coins
-	OriginSendSpent *std.Coins // mutable
-	Banker          BankerInterface
-	Params          ParamsInterface
-	EventLogger     *sdk.EventLogger
+	ChainID          string
+	ChainDomain      string
+	Height           int64
+	Timestamp        int64 // seconds
+	TimestampNano    int64 // nanoseconds, only used for testing.
+	OriginCaller     crypto.Bech32Address
+	OriginSend       std.Coins
+	OriginSendSpent  *std.Coins // mutable
+	Banker           BankerInterface
+	Params           ParamsInterface
+	EventLogger      *sdk.EventLogger
+	PayGasInfo     *sdk.PayGasInfo     // mutable, shared pointer. MaxFee > 0 means PayGas was called.
+	PayStorageInfo *sdk.PayStorageInfo // mutable, shared pointer. MaxDeposit > 0 means PayStorage was called.
+	GasPrice       std.GasPrice       // current gas price for PayGas gas limit derivation
 }
 
 // GetContext returns the execution context.

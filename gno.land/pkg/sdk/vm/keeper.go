@@ -11,6 +11,7 @@ import (
 	"iter"
 	"log/slog"
 	"maps"
+	"math"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -32,6 +33,7 @@ import (
 	osm "github.com/gnolang/gno/tm2/pkg/os"
 	"github.com/gnolang/gno/tm2/pkg/overflow"
 	"github.com/gnolang/gno/tm2/pkg/sdk"
+	"github.com/gnolang/gno/tm2/pkg/sdk/auth"
 	"github.com/gnolang/gno/tm2/pkg/std"
 	"github.com/gnolang/gno/tm2/pkg/store"
 	"github.com/gnolang/gno/tm2/pkg/store/dbadapter"
@@ -47,6 +49,16 @@ const (
 	maxAllocQuery = 1_500_000_000 // higher limit for queries
 	maxGasQuery   = 3_000_000_000 // same as max block gas
 )
+
+// getGasPrice reads the current gas price from the auth module's context value.
+func getGasPrice(ctx sdk.Context) std.GasPrice {
+	if v := ctx.Context().Value(auth.GasPriceContextKey{}); v != nil {
+		if gp, ok := v.(std.GasPrice); ok {
+			return gp
+		}
+	}
+	return std.GasPrice{}
+}
 
 // vm.VMKeeperI defines a module interface that supports Gno
 // smart contracts programming (scripting).
@@ -352,6 +364,19 @@ func (vm *VMKeeper) getTypeCheckCache(ctx sdk.Context) gno.TypeCheckCache {
 	return ctx.Value(vmkContextKeyTypeCheckCache).(gno.TypeCheckCache)
 }
 
+// GetGnoTransactionStore returns the Gno transaction store for the given context.
+// Note: this calls ClearObjectCache internally — use GetGnoTransactionStoreReadOnly
+// when you need to read accumulated state (like RealmStorageDiffs) without clearing.
+func (vm *VMKeeper) GetGnoTransactionStore(ctx sdk.Context) gno.TransactionStore {
+	return vm.getGnoTransactionStore(ctx)
+}
+
+// GetGnoTransactionStoreReadOnly returns the transaction store without clearing the object cache.
+// Use this when reading accumulated state (RealmStorageDiffs) at end-of-tx settlement.
+func (vm *VMKeeper) GetGnoTransactionStoreReadOnly(ctx sdk.Context) gno.TransactionStore {
+	return ctx.Value(vmkContextKeyStore).(gno.TransactionStore)
+}
+
 func (vm *VMKeeper) getGnoTransactionStore(ctx sdk.Context) gno.TransactionStore {
 	txStore := ctx.Value(vmkContextKeyStore).(gno.TransactionStore)
 	txStore.ClearObjectCache()
@@ -508,7 +533,6 @@ func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
 	pkgPath := msg.Package.Path
 	memPkg := msg.Package
 	send := msg.Send
-	maxDeposit := msg.MaxDeposit
 	gnostore := vm.getGnoTransactionStore(ctx)
 	chainDomain := vm.getChainDomainParam(ctx)
 
@@ -610,6 +634,7 @@ func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
 	}
 
 	// Parse and run the files, construct *PV.
+	localPGIAdd := ctx.PayGasInfo()
 	msgCtx := stdlibs.ExecContext{
 		ChainID:         ctx.ChainID(),
 		ChainDomain:     chainDomain,
@@ -621,6 +646,9 @@ func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
 		Banker:          NewSDKBanker(vm, ctx),
 		Params:          NewSDKParams(vm.prmk, ctx),
 		EventLogger:     ctx.EventLogger(),
+		PayGasInfo:      localPGIAdd,
+		PayStorageInfo:  ctx.PayStorageInfo(),
+		GasPrice:        getGasPrice(ctx),
 	}
 	// Parse and run the files, construct *PV.
 	m2 := gno.NewMachineWithOptions(
@@ -634,15 +662,9 @@ func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
 		})
 	defer m2.Release()
 	defer doRecover(m2, &err)
-	params := vm.GetParams(ctx)
 	m2.RunMemPackage(memPkg, true)
 
-	// use the parameters before executing the message, as they may change during execution.
-	// The message should not fail due to parameter changes in the same transaction.
-	err = vm.processStorageDeposit(ctx, creator, maxDeposit, gnostore, params)
-	if err != nil {
-		return err
-	}
+	// Storage deposit settlement is deferred to endTxHook.
 	// Log the telemetry
 	logTelemetry(
 		m2.GasMeter.GasConsumed(),
@@ -658,7 +680,6 @@ func (vm *VMKeeper) AddPackage(ctx sdk.Context, msg MsgAddPackage) (err error) {
 
 // Call calls a public Gno function (for delivertx).
 func (vm *VMKeeper) Call(ctx sdk.Context, msg MsgCall) (res string, err error) {
-	params := vm.GetParams(ctx)
 	pkgPath := msg.PkgPath // to import
 	fnc := msg.Func
 	gnostore := vm.getGnoTransactionStore(ctx)
@@ -696,6 +717,7 @@ func (vm *VMKeeper) Call(ctx sdk.Context, msg MsgCall) (res string, err error) {
 	caller := msg.Caller
 	send := msg.Send
 	chainDomain := vm.getChainDomainParam(ctx)
+	localPGI := ctx.PayGasInfo()
 	msgCtx := stdlibs.ExecContext{
 		ChainID:         ctx.ChainID(),
 		ChainDomain:     chainDomain,
@@ -707,6 +729,9 @@ func (vm *VMKeeper) Call(ctx sdk.Context, msg MsgCall) (res string, err error) {
 		Banker:          NewSDKBanker(vm, ctx),
 		Params:          NewSDKParams(vm.prmk, ctx),
 		EventLogger:     ctx.EventLogger(),
+		PayGasInfo:      localPGI,
+		PayStorageInfo:  ctx.PayStorageInfo(),
+		GasPrice:        getGasPrice(ctx),
 	}
 	// Construct machine and evaluate.
 	m := gno.NewMachineWithOptions(
@@ -770,12 +795,7 @@ func (vm *VMKeeper) Call(ctx sdk.Context, msg MsgCall) (res string, err error) {
 		}
 	}
 
-	// Use parameters before executing the message, as they may change during execution.
-	// Parameter changes take effect only after the message has executed successfully.
-	err = vm.processStorageDeposit(ctx, caller, msg.MaxDeposit, gnostore, params)
-	if err != nil {
-		return "", err
-	}
+	// Storage deposit settlement is deferred to endTxHook.
 	// Log the telemetry
 	logTelemetry(
 		m.GasMeter.GasConsumed(),
@@ -789,7 +809,6 @@ func (vm *VMKeeper) Call(ctx sdk.Context, msg MsgCall) (res string, err error) {
 	res += "\n\n" // use `\n\n` as separator to separate results for single tx with multi msgs
 
 	return res, nil
-	// TODO pay for gas? TODO see context?
 }
 
 func doRecover(m *gno.Machine, e *error) {
@@ -846,7 +865,6 @@ func (vm *VMKeeper) Run(ctx sdk.Context, msg MsgRun) (res string, err error) {
 	send := msg.Send
 	memPkg := msg.Package
 	chainDomain := vm.getChainDomainParam(ctx)
-	params := vm.GetParams(ctx)
 
 	memPkg.Type = gno.MPUserProd
 
@@ -882,6 +900,7 @@ func (vm *VMKeeper) Run(ctx sdk.Context, msg MsgRun) (res string, err error) {
 	}
 
 	// Parse and run the files, construct *PV.
+	localPGIRun := ctx.PayGasInfo()
 	msgCtx := stdlibs.ExecContext{
 		ChainID:         ctx.ChainID(),
 		ChainDomain:     chainDomain,
@@ -893,6 +912,9 @@ func (vm *VMKeeper) Run(ctx sdk.Context, msg MsgRun) (res string, err error) {
 		Banker:          NewSDKBanker(vm, ctx),
 		Params:          NewSDKParams(vm.prmk, ctx),
 		EventLogger:     ctx.EventLogger(),
+		PayGasInfo:      localPGIRun,
+		PayStorageInfo:  ctx.PayStorageInfo(),
+		GasPrice:        getGasPrice(ctx),
 	}
 
 	buf := new(bytes.Buffer)
@@ -946,12 +968,7 @@ func (vm *VMKeeper) Run(ctx sdk.Context, msg MsgRun) (res string, err error) {
 	defer doRecover(m2, &err)
 	m2.RunMain()
 	res = buf.String()
-	// Use parameters before executing the message, as they may change during execution.
-	// Parameter changes take effect only after the message has executed successfully.
-	err = vm.processStorageDeposit(ctx, caller, msg.MaxDeposit, gnostore, params)
-	if err != nil {
-		return "", err
-	}
+	// Storage deposit settlement is deferred to endTxHook.
 	// Log the telemetry
 	logTelemetry(
 		m2.GasMeter.GasConsumed(),
@@ -1238,7 +1255,14 @@ func (vm *VMKeeper) QueryStorage(ctx sdk.Context, pkgPath string) (string, error
 // Returns an aggregated error if any realm processing fails due to insufficient deposit,
 // transfer errors.
 
-func (vm *VMKeeper) processStorageDeposit(ctx sdk.Context, caller crypto.Address, deposit std.Coins, gnostore gno.Store, params Params) error {
+func (vm *VMKeeper) ProcessStorageDeposit(ctx sdk.Context, caller crypto.Address, deposit std.Coins, gnostore gno.Store, params Params) error {
+	// When PayStorage is active, the sponsoring realm pays storage deposits instead of the caller.
+	var maxStorageBudget int64 = math.MaxInt64
+	if psi := ctx.PayStorageInfo(); psi != nil && psi.MaxDeposit > 0 {
+		caller = psi.RealmAddr
+		maxStorageBudget = psi.MaxDeposit
+	}
+
 	realmDiffs := gnostore.RealmStorageDiffs()
 	depositAmt := deposit.AmountOf(ugnot.Denom)
 	if depositAmt == 0 {
@@ -1263,6 +1287,13 @@ func (vm *VMKeeper) processStorageDeposit(ctx sdk.Context, caller crypto.Address
 		if diff > 0 {
 			// lock deposit for the additional storage used.
 			requiredDeposit := overflow.Mulp(diff, price.Amount)
+			// Check PayStorage budget
+			if maxStorageBudget < math.MaxInt64 && requiredDeposit > maxStorageBudget {
+				allErrs = goerrors.Join(allErrs, fmt.Errorf(
+					"storage deposit exceeds PayStorage budget: requires %d%s, budget remaining %d%s",
+					requiredDeposit, ugnot.Denom, maxStorageBudget, ugnot.Denom))
+				continue
+			}
 			if depositAmt < requiredDeposit {
 				allErrs = goerrors.Join(allErrs, fmt.Errorf(
 					"not enough deposit to cover the storage usage: requires %d%s for %d bytes",
@@ -1277,6 +1308,7 @@ func (vm *VMKeeper) processStorageDeposit(ctx sdk.Context, caller crypto.Address
 				continue
 			}
 			depositAmt -= requiredDeposit
+			maxStorageBudget -= requiredDeposit
 			// Emit event for storage deposit lock
 			d := std.Coin{Denom: ugnot.Denom, Amount: requiredDeposit}
 			evt := chain.StorageDepositEvent{

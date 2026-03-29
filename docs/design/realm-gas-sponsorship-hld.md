@@ -1,4 +1,4 @@
-# HLD: Realm Gas Sponsorship (`std.PayGas`)
+# HLD: Realm Transaction Sponsorship (`runtime.PayGas` + `runtime.PayStorage`)
 
 - **Status**: Draft
 - **Authors**: @omarsy
@@ -59,7 +59,7 @@ Signer 1: User account (0 gnot, just signs the action)
 
 The design introduces three components:
 
-1. **`std.PayGas(maxFee int64)`** — a native function callable by realms during execution to commit to paying gas (maxFee in ugnot)
+1. **`runtime.PayGas(maxFee int64)`** — a native function callable by realms during execution to commit to paying gas (maxFee in ugnot)
 2. **Gas credit window** — a bounded amount of gas that a 0-fee transaction can consume before `PayGas` is called, configured as a consensus parameter
 3. **Validator-level opt-in** — each validator independently decides whether to accept 0-fee transactions into their mempool
 
@@ -93,7 +93,7 @@ User (0 gnot)                    Validator (opt-in)                All Nodes
 
 ## 5. Detailed Design
 
-### 5.1 Native Function: `std.PayGas(maxFee int64)`
+### 5.1 Native Function: `runtime.PayGas(maxFee int64)`
 
 A new native function available to realm code:
 
@@ -151,7 +151,52 @@ func PayGas(maxFee int64)
 
 **Note on security:** A realm that calls `PayGas` unconditionally in a public function is opting in to pay gas for any caller. Realm authors must validate callers (whitelists, token collection, etc.) **before** calling `PayGas` to avoid being drained.
 
-### 5.2 Gas Credit Window
+### 5.2 Native Function: `runtime.PayStorage(maxDeposit int64)`
+
+`PayGas` covers gas fees but **not storage deposits**. Storage deposits are charged when realm state changes (bytes written × storage price). A separate `PayStorage` function lets the realm opt into paying storage deposits with its own cap.
+
+`PayGas` and `PayStorage` are **fully independent** — a realm can call either or both:
+
+| Combination | Gas paid by | Storage paid by |
+|-------------|------------|-----------------|
+| Neither | User | User |
+| PayGas only | Realm | User |
+| PayStorage only | User | Realm |
+| Both | Realm | Realm (truly gasless) |
+
+```go
+// std package — available to all realms
+// maxDeposit is denominated in ugnot
+func PayStorage(maxDeposit int64)
+```
+
+**Behavior:**
+
+- Same call rules as `PayGas`: only realms, function creator must match payer, once per tx
+- `maxDeposit` caps the total storage deposit the realm will pay in ugnot
+- If total storage deposits exceed `maxDeposit`, the tx fails (storage budget exceeded)
+- If `PayGas` was already called, `PayStorage` must be called by the **same realm**
+- Can be called independently of `PayGas` (realm pays storage but not gas, or vice versa)
+
+**Storage deposit deferral:** Storage deposits are settled at the **end of the transaction** (in `endTxHook`), not per-message. This means:
+- In multi-message txs, `PayStorage` covers storage for ALL messages — including messages executed before `PayStorage` is called
+- The gno transaction store accumulates `RealmStorageDiffs()` across all messages, and settlement runs once after all messages complete
+- If the tx fails, all storage deposits revert (inside cached context)
+
+**Combined usage for truly gasless transactions:**
+
+```go
+func DoWork(cur realm) string {
+    runtime.PayGas(1000000)    // realm pays gas up to 1 gnot
+    runtime.PayStorage(500000) // realm pays storage up to 0.5 gnot
+    // ... work that modifies state ...
+    return "done"
+}
+```
+
+Without `PayStorage`, the caller pays storage deposits even when `PayGas` is active. A user with 0 gnot calling a realm that modifies state would fail on the storage deposit.
+
+### 5.3 Gas Credit Window
 
 A **consensus parameter** that defines the maximum gas a 0-fee transaction can consume before `PayGas()` must be called:
 
@@ -173,7 +218,7 @@ type GasParams struct {
 - **Recommended initial value: `500,000` gas** — must be large enough to support multi-message patterns (e.g. `Approve` + `TransferFrom` + `PayGas`). A single cross-realm call can consume 50-100k gas, so multi-msg txs with 2-3 calls before `PayGas` need 300-500k gas of credit.
 - **Default value: `0`** — feature is disabled until activated by governance. Setting `MaxGasCreditPerTx = 0` acts as a kill switch. Requires a coordinated chain upgrade so all nodes understand the new consensus param before activation.
 
-### 5.3 Validator-Level Opt-In
+### 5.4 Validator-Level Opt-In
 
 Each validator configures locally whether to accept 0-fee transactions:
 
@@ -192,7 +237,7 @@ allow_zero_fee_txs = false          # default: false (conservative)
 
 **Key insight**: Simulation happens at CheckTx time, **before** the tx enters the mempool. This means only validated 0-fee txs are gossiped to other nodes — no network-wide spam. Block validation (DeliverTx) is the same for all validators. A validator that doesn't accept 0-fee txs into their own mempool will still validate blocks containing them.
 
-### 5.4 Gas Meter Mechanics
+### 5.5 Gas Meter Mechanics
 
 During execution of a 0-fee transaction, the gas meter operates in two phases:
 
@@ -215,7 +260,7 @@ Settlement (post-execution):
   - On failure: everything reverted (realm does NOT pay)
 ```
 
-### 5.5 Settlement
+### 5.6 Settlement
 
 After transaction execution completes **successfully**:
 
@@ -242,7 +287,7 @@ type PayGasInfo struct {
 
 This is set by the GnoVM during execution and read by the SDK settlement logic in `runTx`. The execution context already flows between the VM and SDK layers, so no new plumbing is needed — just a new field on the context.
 
-### 5.6 CheckTx Simulation
+### 5.7 CheckTx Simulation
 
 Validators that opt-in **simulate** 0-fee txs at CheckTx time, before accepting them into the mempool. This ensures only validated 0-fee txs are gossiped to the network.
 
@@ -271,11 +316,11 @@ CheckTx for 0-fee tx:
 ```go
 package myapp
 
-import "std"
+import "chain/runtime"
 
 func DoSomething() {
     // Realm pays gas for all callers, up to 500 ugnot
-    std.PayGas(500)
+    runtime.PayGas(500)
 
     // ... realm logic ...
 }
@@ -314,7 +359,7 @@ func Swap(usdcAmount int64) {
     usdc.TransferFrom(caller, std.CurrentRealm().Addr(), usdcAmount)
 
     // Now realm pays gas from its gnot balance, up to 1000 ugnot
-    std.PayGas(1_000)
+    runtime.PayGas(1_000)
 
     // ... perform swap logic ...
 }
@@ -330,7 +375,7 @@ func Swap(usdcAmount int64) {
 ```go
 package premium
 
-import "std"
+import "chain/runtime"
 
 var whitelist = map[std.Address]bool{}
 
@@ -342,7 +387,7 @@ func Action() {
         panic("not whitelisted")
     }
 
-    std.PayGas(300)
+    runtime.PayGas(300)
 
     // ... do work for whitelisted user ...
 }
@@ -383,7 +428,7 @@ Validators who don't opt in bear zero additional cost. Opt-in validators accept 
 ### 8.2 Native Function
 
 - **File**: `gnovm/stdlibs/std/native.go` (or equivalent)
-- **Change**: Register `std.PayGas(maxFee int64)` native function
+- **Change**: Register `runtime.PayGas(maxFee int64)` native function
 - **Behavior at call time**:
   1. Verify caller is a realm (not a package or `main`)
   2. Verify `PayGas` not already called in this tx (check `PayGasInfo` on context)
@@ -565,7 +610,7 @@ func GameAction(action string) {
         sess.UserAddr, sess.Expiry, sess.MaxCalls, sess.CallsUsed + 1,
     }
 
-    std.PayGas(200) // realm pays gas for session key holder
+    runtime.PayGas(200) // realm pays gas for session key holder
 
     // ... execute action as sess.UserAddr ...
 }
