@@ -21,16 +21,16 @@ do not over-use it. We try to keep all data structured and standard additions
 here would be better just to add to the Context struct
 */
 type Context struct {
-	ctx           context.Context
-	mode          RunTxMode
-	ms            store.MultiStore
-	header        abci.Header
-	chainID       string
-	txBytes       []byte
-	logger        *slog.Logger
-	voteInfo      []abci.VoteInfo
-	gasMeter      store.GasMeter // XXX make passthroughGasMeter w/ blockGasMeter?
-	blockGasMeter store.GasMeter
+	ctx            context.Context
+	mode           RunTxMode
+	ms             store.MultiStore
+	header         abci.Header
+	chainID        string
+	txBytes        []byte
+	logger         *slog.Logger
+	voteInfo       []abci.VoteInfo
+	gasMeter       store.GasMeter // XXX make passthroughGasMeter w/ blockGasMeter?
+	blockGasMeter  store.GasMeter
 	minGasPrices   []GasPrice
 	consParams     *abci.ConsensusParams
 	eventLogger    *EventLogger
@@ -44,24 +44,24 @@ type Context struct {
 type Request = Context
 
 // Read-only accessors
-func (c Context) Context() context.Context      { return c.ctx }
-func (c Context) Mode() RunTxMode               { return c.mode }
-func (c Context) MultiStore() store.MultiStore  { return c.ms }
-func (c Context) BlockHeight() int64            { return c.header.GetHeight() }
-func (c Context) BlockTime() time.Time          { return c.header.GetTime() }
-func (c Context) ChainID() string               { return c.chainID }
-func (c Context) TxBytes() []byte               { return c.txBytes }
-func (c Context) Logger() *slog.Logger          { return c.logger }
-func (c Context) VoteInfos() []abci.VoteInfo    { return c.voteInfo }
-func (c Context) GasMeter() store.GasMeter      { return c.gasMeter }
-func (c Context) BlockGasMeter() store.GasMeter { return c.blockGasMeter }
-func (c Context) IsCheckTx() bool               { return c.mode == RunTxModeCheck }
-func (c Context) MinGasPrices() []GasPrice      { return c.minGasPrices }
-func (c Context) EventLogger() *EventLogger     { return c.eventLogger }
-func (c Context) PayGasInfo() *PayGasInfo        { return c.payGasInfo }
+func (c Context) Context() context.Context        { return c.ctx }
+func (c Context) Mode() RunTxMode                 { return c.mode }
+func (c Context) MultiStore() store.MultiStore    { return c.ms }
+func (c Context) BlockHeight() int64              { return c.header.GetHeight() }
+func (c Context) BlockTime() time.Time            { return c.header.GetTime() }
+func (c Context) ChainID() string                 { return c.chainID }
+func (c Context) TxBytes() []byte                 { return c.txBytes }
+func (c Context) Logger() *slog.Logger            { return c.logger }
+func (c Context) VoteInfos() []abci.VoteInfo      { return c.voteInfo }
+func (c Context) GasMeter() store.GasMeter        { return c.gasMeter }
+func (c Context) BlockGasMeter() store.GasMeter   { return c.blockGasMeter }
+func (c Context) IsCheckTx() bool                 { return c.mode == RunTxModeCheck }
+func (c Context) MinGasPrices() []GasPrice        { return c.minGasPrices }
+func (c Context) EventLogger() *EventLogger       { return c.eventLogger }
+func (c Context) PayGasInfo() *PayGasInfo         { return c.payGasInfo }
 func (c Context) PayStorageInfo() *PayStorageInfo { return c.payStorageInfo }
-func (c Context) TxCaller() crypto.Address       { return c.txCaller }
-func (c Context) SponsorStorage() bool           { return c.sponsorStorage }
+func (c Context) TxCaller() crypto.Address        { return c.txCaller }
+func (c Context) SponsorStorage() bool            { return c.sponsorStorage }
 
 // clone the header before returning
 func (c Context) BlockHeader() abci.Header {
