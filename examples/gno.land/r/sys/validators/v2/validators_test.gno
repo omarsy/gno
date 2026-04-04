@@ -154,8 +154,19 @@ func TestGetChanges_PanicsOnInvalidRange(t *testing.T) {
 	})
 }
 
-func TestGetChanges_PanicsOnOverflow(t *testing.T) {
-	uassert.PanicsWithMessage(t, "to exceeds maximum allowed value", func() {
-		GetChanges(0, math.MaxInt64)
+func TestGetChanges_ClampsMaxInt64(t *testing.T) {
+	changes = avl.NewTree()
+
+	vals := generateTestValidators(1)
+
+	// Simulate a validator change at block math.MaxInt64-1 (the boundary value).
+	changes.Set(getBlockID(math.MaxInt64-1), []change{
+		{blockNum: math.MaxInt64 - 1, validator: vals[0]},
 	})
+
+	// Passing math.MaxInt64 as "to" means "get all updates from here onwards".
+	// The clamp (to = MaxInt64-1) must still include the boundary block.
+	result := GetChanges(math.MaxInt64-1, math.MaxInt64)
+	uassert.Equal(t, 1, len(result))
+	uassert.Equal(t, vals[0].Address, result[0].Address)
 }

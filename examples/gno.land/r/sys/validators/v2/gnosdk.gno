@@ -8,11 +8,12 @@ import (
 
 // GetChanges returns the validator changes stored on the realm,
 // for blocks in the [from, to] range (inclusive on both ends).
-// Panics if from > to or if to >= math.MaxInt64 (to avoid overflow).
+// If to >= math.MaxInt64, it is clamped to math.MaxInt64-1 to avoid overflow.
+// Panics if from > to (after clamping).
 // This function is intended to be called by gno.land through the GnoSDK.
 func GetChanges(from, to int64) []validators.Validator {
 	if to > math.MaxInt64-1 {
-		panic("to exceeds maximum allowed value")
+		to = math.MaxInt64 - 1
 	}
 	if to < from {
 		panic("invalid range: from must be <= to")
