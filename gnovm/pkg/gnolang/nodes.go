@@ -1427,6 +1427,7 @@ func (pn *PackageNode) PrepareNewValues(alloc *Allocator, pv *PackageValue) []Ty
 				}
 			}
 		}
+		alloc.AllocateBlockItems(int64(len(nvs)))
 		block.Values = append(block.Values, nvs...)
 		return block.Values[pvl:]
 	} else if pvl > pnl {
@@ -1927,7 +1928,12 @@ func (sb *StaticBlock) GetLocalIndex(n Name) (uint16, bool) {
 	for i, name := range sb.Names {
 		if name == n {
 			if debug {
-				nt := reflect.TypeOf(sb.Source).String()
+				var nt string
+				if sb.Source != nil {
+					nt = reflect.TypeOf(sb.Source).String()
+				} else {
+					nt = "<nil>"
+				}
 				debug.Printf("StaticBlock(%p %v).GetLocalIndex(%s) = %v, %v\n",
 					sb, nt, n, i, name)
 			}
@@ -1935,7 +1941,12 @@ func (sb *StaticBlock) GetLocalIndex(n Name) (uint16, bool) {
 		}
 	}
 	if debug {
-		nt := reflect.TypeOf(sb.Source).String()
+		var nt string
+		if sb.Source != nil {
+			nt = reflect.TypeOf(sb.Source).String()
+		} else {
+			nt = "<nil>"
+		}
 		debug.Printf("StaticBlock(%p %v).GetLocalIndex(%s) = undefined\n",
 			sb, nt, n)
 	}
