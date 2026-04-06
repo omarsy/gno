@@ -1,4 +1,4 @@
-// MAXALLOC: 5000000
+// MAXALLOC: 500000000
 
 package main
 
