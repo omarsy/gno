@@ -459,6 +459,11 @@ func EndBlocker(
 	ctx sdk.Context,
 	req abci.RequestEndBlock,
 ) abci.ResponseEndBlock {
+	// On restart the in-memory event collector is empty — events from the
+	// last block before shutdown are lost. firstBlock ensures the first
+	// EndBlocker always queries the VM for pending validator changes.
+	firstBlock := true
+
 	return func(ctx sdk.Context, _ abci.RequestEndBlock) abci.ResponseEndBlock {
 		// set the auth params value in the ctx.  The EndBlocker will use InitialGasPrice in
 		// the params to calculate the updated gas price.
@@ -469,9 +474,17 @@ func EndBlocker(
 			auth.EndBlocker(ctx, gpk)
 		}
 
-		// Check if there was a valset change
-		if len(collector.getEvents()) == 0 {
-			// No valset updates
+		// Check if there was a valset change.
+		// On the very first block, skip this check — the collector may be
+		// empty after a restart even though changes are pending in the realm.
+		if firstBlock {
+			firstBlock = false
+			collector.getEvents() // drain any accumulated events
+			// On genesis (height 0) there are no pending changes to recover.
+			if app.LastBlockHeight() == 0 {
+				return abci.ResponseEndBlock{}
+			}
+		} else if len(collector.getEvents()) == 0 {
 			return abci.ResponseEndBlock{}
 		}
 

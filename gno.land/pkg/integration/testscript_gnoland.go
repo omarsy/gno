@@ -228,6 +228,8 @@ func SetupGnolandTestscript(t *testing.T, p *testscript.Params) error {
 	cmds := map[string]func(ts *testscript.TestScript, neg bool, args []string){
 		"gnoland":     gnolandCmd(t, nodesManager, gnoRootDir),
 		"gnokey":      gnokeyCmd(nodesManager),
+		"gnorpc":      gnorpcCmd(nodesManager),
+		"sleep":       sleepCmd(),
 		"adduser":     adduserCmd(nodesManager),
 		"adduserfrom": adduserfromCmd(nodesManager),
 		"patchpkg":    patchpkgCmd(),
@@ -875,6 +877,48 @@ func getNodeSID(ts *testscript.TestScript) string {
 	return ts.Getenv("SID")
 }
 
+// gnorpcCmd provides RPC query access to the running gnoland node.
+// Usage: gnorpc validators
+func gnorpcCmd(nodes *NodesManager) func(ts *testscript.TestScript, neg bool, args []string) {
+	return func(ts *testscript.TestScript, neg bool, args []string) {
+		if len(args) == 0 {
+			ts.Fatalf("gnorpc requires a subcommand; supported: validators")
+		}
+
+		sid := getNodeSID(ts)
+		n, ok := nodes.Get(sid)
+		if !ok {
+			ts.Fatalf("gnorpc: node not running")
+		}
+
+		raddr := n.Address()
+		if raddr == "" {
+			ts.Fatalf("gnorpc: node has no address")
+		}
+
+		rpcClient, err := rpcclient.NewHTTPClient(raddr)
+		if err != nil {
+			tsValidateError(ts, "gnorpc", neg, err)
+			return
+		}
+
+		switch args[0] {
+		case "validators":
+			res, err := rpcClient.Validators(context.Background(), nil)
+			if err != nil {
+				tsValidateError(ts, "gnorpc", neg, err)
+				return
+			}
+
+			for _, v := range res.Validators {
+				fmt.Fprintf(ts.Stdout(), "%s power=%d\n", v.Address, v.VotingPower)
+			}
+		default:
+			ts.Fatalf("gnorpc: unknown subcommand %q", args[0])
+		}
+	}
+}
+
 func inputCmd() func(ts *testscript.TestScript, neg bool, args []string) {
 	return func(ts *testscript.TestScript, neg bool, args []string) {
 		if neg {
@@ -894,6 +938,24 @@ func inputCmd() func(ts *testscript.TestScript, neg bool, args []string) {
 		// Join all arguments with spaces and add newline
 		content := strings.Join(args, " ") + "\n"
 		stdinBuf.WriteString(content)
+	}
+}
+
+// sleepCmd pauses execution for the given duration.
+// Usage: sleep 1s
+func sleepCmd() func(ts *testscript.TestScript, neg bool, args []string) {
+	return func(ts *testscript.TestScript, neg bool, args []string) {
+		if neg {
+			ts.Fatalf("sleep does not support negation")
+		}
+		if len(args) != 1 {
+			ts.Fatalf("sleep requires exactly one argument (e.g., 1s, 500ms)")
+		}
+		d, err := time.ParseDuration(args[0])
+		if err != nil {
+			ts.Fatalf("sleep: invalid duration %q: %v", args[0], err)
+		}
+		time.Sleep(d)
 	}
 }
 

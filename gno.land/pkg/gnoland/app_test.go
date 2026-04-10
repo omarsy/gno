@@ -576,8 +576,12 @@ func TestEndBlocker(t *testing.T) {
 		// Fire a GnoVM event
 		mockEventSwitch.FireEvent(chain.Event{})
 
+		mockApp := &mockEndBlockerApp{
+			lastBlockHeightFn: func() int64 { return 1 },
+		}
+
 		// Create the EndBlocker
-		eb := EndBlocker(c, nil, nil, mockVMKeeper, &mockEndBlockerApp{})
+		eb := EndBlocker(c, nil, nil, mockVMKeeper, mockApp)
 
 		// Run the EndBlocker
 		res := eb(sdk.Context{}.WithConsensusParams(&abci.ConsensusParams{
@@ -623,8 +627,12 @@ func TestEndBlocker(t *testing.T) {
 		// Fire a GnoVM event
 		mockEventSwitch.FireEvent(chain.Event{})
 
+		mockApp := &mockEndBlockerApp{
+			lastBlockHeightFn: func() int64 { return 1 },
+		}
+
 		// Create the EndBlocker
-		eb := EndBlocker(c, nil, nil, mockVMKeeper, &mockEndBlockerApp{})
+		eb := EndBlocker(c, nil, nil, mockVMKeeper, mockApp)
 
 		// Run the EndBlocker
 		res := eb(sdk.Context{}.WithConsensusParams(&abci.ConsensusParams{
@@ -695,8 +703,12 @@ func TestEndBlocker(t *testing.T) {
 
 		mockEventSwitch.FireEvent(txEvent)
 
+		mockApp := &mockEndBlockerApp{
+			lastBlockHeightFn: func() int64 { return 1 },
+		}
+
 		// Create the EndBlocker
-		eb := EndBlocker(c, nil, nil, mockVMKeeper, &mockEndBlockerApp{})
+		eb := EndBlocker(c, nil, nil, mockVMKeeper, mockApp)
 
 		// Run the EndBlocker
 		res := eb(sdk.Context{}.WithConsensusParams(&abci.ConsensusParams{
@@ -770,7 +782,10 @@ func TestEndBlocker(t *testing.T) {
 		c := newCollector[validatorUpdate](mockEventSwitch, validatorEventFilter)
 		mockEventSwitch.FireEvent(txEvent)
 
-		eb := EndBlocker(c, nil, nil, mockVMKeeper, &mockEndBlockerApp{})
+		mockApp := &mockEndBlockerApp{
+			lastBlockHeightFn: func() int64 { return 1 },
+		}
+		eb := EndBlocker(c, nil, nil, mockVMKeeper, mockApp)
 		res := eb(sdk.Context{}.WithConsensusParams(&abci.ConsensusParams{
 			Validator: &abci.ValidatorParams{
 				PubKeyTypeURLs: []string{"/tm.PubKeySecp256k1"},
@@ -835,7 +850,10 @@ func TestEndBlocker(t *testing.T) {
 
 		c := newCollector[validatorUpdate](mockEventSwitch, validatorEventFilter)
 		mockEventSwitch.FireEvent(txEvent)
-		eb := EndBlocker(c, nil, nil, mockVMKeeper, &mockEndBlockerApp{})
+		mockApp := &mockEndBlockerApp{
+			lastBlockHeightFn: func() int64 { return 1 },
+		}
+		eb := EndBlocker(c, nil, nil, mockVMKeeper, mockApp)
 		res := eb(sdk.Context{}.WithConsensusParams(&abci.ConsensusParams{
 			Validator: &abci.ValidatorParams{
 				PubKeyTypeURLs: []string{"/tm.PubKeySecp256k1"},
@@ -890,7 +908,10 @@ func TestEndBlocker(t *testing.T) {
 
 		c := newCollector[validatorUpdate](mockEventSwitch, validatorEventFilter)
 		mockEventSwitch.FireEvent(txEvent)
-		eb := EndBlocker(c, nil, nil, mockVMKeeper, &mockEndBlockerApp{})
+		mockApp := &mockEndBlockerApp{
+			lastBlockHeightFn: func() int64 { return 1 },
+		}
+		eb := EndBlocker(c, nil, nil, mockVMKeeper, mockApp)
 		res := eb(sdk.Context{}.WithConsensusParams(&abci.ConsensusParams{
 			Validator: &abci.ValidatorParams{
 				PubKeyTypeURLs: []string{"/tm.PubKeyEd25519"},
